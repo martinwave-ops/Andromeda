@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Let do galaxie Andromeda</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;overscroll-behavior:none;
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none;-webkit-tap-highlight-color:transparent}
+  #app{position:fixed;left:0;top:0;overflow:hidden;background:#000;color:#8fe9ff;
+    font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif;font-size:16px}
+  canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+  button{font-family:inherit;cursor:pointer;-webkit-appearance:none;appearance:none}
+
+  /* horní tlačítka */
+  #topbtns{position:absolute;right:7%;top:1.6%;display:flex;gap:.6em;z-index:6}
+  .mini{font-size:.62em;letter-spacing:.2em;color:#9fefff;background:rgba(10,30,45,.7);
+    border:1px solid rgba(110,220,255,.4);border-radius:6px;padding:.6em 1em;box-shadow:0 0 10px rgba(80,200,255,.2)}
+
+  /* panely palubní desky */
+  .panel{position:absolute;top:75.5%;height:20%;box-sizing:border-box;padding:1em 1.3em;overflow:hidden;z-index:3;
+    border:1px solid rgba(110,220,255,.35);border-radius:14px;
+    background:linear-gradient(180deg,rgba(10,24,36,.88),rgba(3,8,14,.94));
+    box-shadow:inset 0 0 22px rgba(80,200,255,.14),0 0 14px rgba(0,0,0,.8);
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  #pL{left:6%;width:27%} #pC{left:35%;width:30%} #pR{left:67%;width:27%}
+  .lbl{font-size:.62em;letter-spacing:.22em;opacity:.65;white-space:nowrap}
+  .val{font-size:1.55em;margin:.35em 0 .25em;color:#d9fbff;white-space:nowrap;text-shadow:0 0 12px rgba(90,220,255,.8)}
+  .sub{font-size:.7em;opacity:.75;white-space:nowrap}
+  .bar{height:.55em;border-radius:9px;background:rgba(80,200,255,.12);border:1px solid rgba(110,220,255,.3);overflow:hidden;margin:.5em 0 .4em}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2a7cff,#5ff0ff,#fff);box-shadow:0 0 12px #5ff}
+
+  /* úvodní a závěrečná obrazovka */
+  .scr{position:absolute;left:0;width:100%;text-align:center;color:#e3f8ff;z-index:5;transition:opacity .9s}
+  .scr.hide{opacity:0;pointer-events:none}
+  .scr h1{margin:0;font-weight:200;font-size:3.1em;letter-spacing:.38em;text-indent:.38em;text-shadow:0 0 28px #3cf,0 0 60px #25a}
+  .scr p{margin:.7em 0 0;letter-spacing:.16em;font-size:.95em;opacity:.8}
+  .big{position:absolute;left:50%;transform:translateX(-50%);padding:.8em 3em;font-size:1.45em;letter-spacing:.4em;text-indent:.4em;
+    color:#c8faff;background:rgba(20,80,110,.35);border:1px solid #6ef;border-radius:99px;
+    box-shadow:0 0 30px rgba(80,220,255,.5),inset 0 0 22px rgba(80,220,255,.25);animation:pulse 2.2s infinite ease-in-out}
+  @keyframes pulse{50%{box-shadow:0 0 52px rgba(80,220,255,.85),inset 0 0 28px rgba(80,220,255,.4)}}
+  #scrStart{top:11%} #scrEnd{top:13%}
+  #start{top:48vh}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="sky"></canvas>
+  <canvas id="frame"></canvas>
+
+  <div id="topbtns">
+    <button class="mini" id="btnSound">ZVUK: ZAP</button>
+    <button class="mini" id="btnFs">CELÁ OBRAZOVKA</button>
+  </div>
+
+  <div class="panel" id="pL">
+    <div class="lbl">RYCHLOST</div>
+    <div class="val" id="vVal">0,0000 c</div>
+    <div class="sub">Lorentzův faktor γ = <span id="gVal">1,00</span></div>
+  </div>
+  <div class="panel" id="pC">
+    <div class="lbl">CÍL: GALAXIE ANDROMEDA (M31)</div>
+    <div class="val" id="dVal">2 500 000 ly</div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="sub" id="pVal">Trasa: 0 %</div>
+  </div>
+  <div class="panel" id="pR">
+    <div class="lbl">STAV LODI</div>
+    <div class="val" id="stVal">PŘIPRAVENA</div>
+    <div class="bar"><i id="eng"></i></div>
+    <div class="sub">Čas letu <span id="tmVal">00:00</span></div>
+  </div>
+
+  <div class="scr" id="scrStart">
+    <h1>ANDROMEDA</h1>
+    <p>VZDÁLENOST 2 500 000 SVĚTELNÝCH LET</p>
+  </div>
+  <button class="big" id="start">START</button>
+
+  <div class="scr hide" id="scrEnd">
+    <h1>VÍTEJTE</h1>
+    <p>DORAZILI JSTE DO GALAXIE ANDROMEDA</p>
+    <button class="big" id="again" style="top:44vh;position:absolute;pointer-events:auto">LETĚT ZNOVU</button>
+  </div>
+</div>
+
+<script>
+(() => {
+'use strict';
+const $ = id => document.getElementById(id);
+const app = $('app'), sky = $('sky'), fr = $('frame');
+const ctx = sky.getContext('2d'), fx = fr.getContext('2d');
+const TAU = Math.PI * 2, rnd = Math.random;
+const clamp = (x,a,b) => x<a?a:x>b?b:x;
+const lerp = (a,b,t) => a+(b-a)*t;
+function gauss(){let u=0,v=0;while(!u)u=rnd();while(!v)v=rnd();return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v);}
+
+/* ================== NASTAVENÍ ================== */
+const D0 = 2.5e6;      // vzdálenost k Andromedě [ly]
+const DEND = 6e4;      // v jaké vzdálenosti letíme "dovnitř" galaxie [ly]
+const RGAL = 1.1e5;    // poloměr galaxie [ly]
+const TA = 70;         // délka zrychlování v sekundách
+const PHIMAX = 16;     // maximální "rapidity" (v = tanh(phi), gamma = cosh(phi))
+const NA = 2600;       // hvězdy na pozadí (aberace + Dopplerův jev)
+const NB = 800;        // blízké hvězdy (čáry)
+const ZF = 45;
+
+/* ================== STAV ================== */
+const st = {phase:'idle', t:0, arrT:0, phi:0, h:0, D:D0, flash:0};
+let phiVis=0, beta=0, gamma=1, vis=0, vB=0, endShown=false;
+let dprCap = 2, soundOn = true;
+
+/* ================== PALETA ================== */
+const PAL = [];
+(function(){
+  const s=[[0,255,80,50],[4,255,165,105],[7,255,236,216],[9,246,246,255],[12,190,214,255],[15,130,176,255],[19,90,130,255]];
+  for(let i=0;i<20;i++){
+    let a=s[0],b=s[s.length-1];
+    for(let j=0;j<s.length-1;j++) if(i>=s[j][0]&&i<=s[j+1][0]){a=s[j];b=s[j+1];break;}
+    const t=(i-a[0])/((b[0]-a[0])||1);
+    PAL.push(`rgb(${Math.round(lerp(a[1],b[1],t))},${Math.round(lerp(a[2],b[2],t))},${Math.round(lerp(a[3],b[3],t))})`);
+  }
+})();
+
+/* ================== GALAXIE (procedurální sprite + mipmapy) ================== */
+const mips = [];
+function buildGalaxy(){
+  const S=2048, c=S/2, R=S*0.47;
+  const cv=document.createElement('canvas'); cv.width=cv.height=S;
+  const g=cv.getContext('2d');
+  g.globalCompositeOperation='lighter';
+  let gr=g.createRadialGradient(c,c,0,c,c,R*1.05);
+  gr.addColorStop(0,'rgba(255,214,160,0.55)');
+  gr.addColorStop(.12,'rgba(255,190,130,0.28)');
+  gr.addColorStop(.4,'rgba(120,140,230,0.10)');
+  gr.addColorStop(.75,'rgba(80,100,200,0.04)');
+  gr.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=gr; g.fillRect(0,0,S,S);
+
+  for(let i=0;i<150000;i++){
+    let r,th; const k=rnd();
+    if(k<0.22){ r=clamp(0.55+gauss()*0.06,0.05,1); th=rnd()*TAU; }                 // slavný prstenec M31
+    else if(k<0.80){ r=Math.pow(rnd(),0.8); th=(rnd()<.5?0:Math.PI)+r*5.2+gauss()*(0.10+0.25*r); } // ramena
+    else { r=Math.pow(rnd(),1.6); th=rnd()*TAU; }                                 // disk
+    const rr=r*R, x=c+Math.cos(th)*rr, y=c+Math.sin(th)*rr;
+    const t=clamp(r*1.25,0,1);
+    const a=(k<0.22?0.16:0.11)*(1.1-r*0.5);
+    g.fillStyle=`rgba(${lerp(255,140,t)|0},${lerp(205,175,t)|0},${lerp(150,255,t)|0},${a})`;
+    const s=0.8+rnd()*1.6; g.fillRect(x,y,s,s);
+  }
+  // růžové oblasti tvorby hvězd
+  for(let i=0;i<4000;i++){
+    const r=0.4+rnd()*0.4, th=(rnd()<.5?0:Math.PI)+r*5.2+gauss()*0.12;
+    g.fillStyle=`rgba(255,120,170,${0.08+rnd()*0.12})`;
+    g.fillRect(c+Math.cos(th)*r*R,c+Math.sin(th)*r*R,1+rnd()*2,1+rnd()*2);
+  }
+  // prachové pruhy
+  g.globalCompositeOperation='destination-out';
+  for(let i=0;i<70000;i++){
+    const r=0.12+rnd()*0.85;
+    const th=(rnd()<.5?0:Math.PI)+r*5.2+0.38+gauss()*0.05;
+    g.fillStyle=`rgba(0,0,0,${0.05+rnd()*0.1})`;
+    const s=1.5+rnd()*2.5; g.fillRect(c+Math.cos(th)*r*R,c+Math.sin(th)*r*R,s,s);
+  }
+  for(let i=0;i<20000;i++){
+    const r=0.47+gauss()*0.025, th=rnd()*TAU;
+    g.fillStyle=`rgba(0,0,0,${0.05+rnd()*0.08})`;
+    g.fillRect(c+Math.cos(th)*r*R,c+Math.sin(th)*r*R,2,2);
+  }
+  g.globalCompositeOperation='lighter';
+  // jasné hvězdy v ramenech
+  for(let i=0;i<2500;i++){
+    const r=Math.pow(rnd(),0.8), th=(rnd()<.5?0:Math.PI)+r*5.2+gauss()*0.15;
+    g.fillStyle=`rgba(255,255,255,${0.4+rnd()*0.5})`;
+    const s=1.2+rnd()*2; g.fillRect(c+Math.cos(th)*r*R,c+Math.sin(th)*r*R,s,s);
+  }
+  // jádro
+  gr=g.createRadialGradient(c,c,0,c,c,R*0.22);
+  gr.addColorStop(0,'rgba(255,248,230,1)');
+  gr.addColorStop(.15,'rgba(255,225,170,.85)');
+  gr.addColorStop(.4,'rgba(255,190,120,.35)');
+  gr.addColorStop(1,'rgba(255,170,100,0)');
+  g.fillStyle=gr; g.fillRect(0,0,S,S);
+
+  mips.push(cv); let cur=cv;
+  for(let s=S/2;s>=128;s/=2){
+    const m=document.createElement('canvas'); m.width=m.height=s;
+    const mg=m.getContext('2d'); mg.imageSmoothingQuality='high'; mg.drawImage(cur,0,0,s,s);
+    mips.push(m); cur=m;
+  }
+}
+
+/* ================== POZADÍ - MLHOVINY ================== */
+let nebula;
+function buildNebula(){
+  const w=1024,h=640; nebula=document.createElement('canvas'); nebula.width=w; nebula.height=h;
+  const g=nebula.getContext('2d');
+  g.fillStyle='#02030a'; g.fillRect(0,0,w,h);
+  g.globalCompositeOperation='lighter';
+  const cols=[[90,50,160],[40,80,190],[30,120,150],[170,50,120],[60,40,130]];
+  const blob=(n,r0,r1,a0,a1)=>{
+    for(let i=0;i<n;i++){
+      const x=rnd()*w,y=rnd()*h,r=r0+rnd()*(r1-r0),c=cols[(rnd()*cols.length)|0],a=a0+rnd()*(a1-a0);
+      const gr=g.createRadialGradient(x,y,0,x,y,r);
+      gr.addColorStop(0,`rgba(${c[0]},${c[1]},${c[2]},${a})`);
+      gr.addColorStop(1,`rgba(${c[0]},${c[1]},${c[2]},0)`);
+      g.fillStyle=gr; g.fillRect(x-r,y-r,r*2,r*2);
+    }
+  };
+  blob(22,120,380,0.03,0.09); blob(60,25,110,0.02,0.05);
+}
+
+/* ================== HVĚZDY ================== */
+const sx=new Float32Array(NA), sy=new Float32Array(NA), sz=new Float32Array(NA),
+      stint=new Float32Array(NA), smag=new Float32Array(NA);
+(function(){
+  for(let i=0;i<NA;i++){
+    let x,y,z;
+    if(rnd()<0.35){ // Mléčná dráha - pás
+      const a=rnd()*TAU, lat=gauss()*0.16;
+      x=Math.cos(lat)*Math.cos(a); z=Math.cos(lat)*Math.sin(a); y=Math.sin(lat);
+      let y2=y*Math.cos(.9)-z*Math.sin(.9), z2=y*Math.sin(.9)+z*Math.cos(.9); y=y2; z=z2;
+      let x2=x*Math.cos(.4)-y*Math.sin(.4), y3=x*Math.sin(.4)+y*Math.cos(.4); x=x2; y=y3;
+    } else { z=rnd()*2-1; const a=rnd()*TAU, r=Math.sqrt(1-z*z); x=r*Math.cos(a); y=r*Math.sin(a); }
+    sx[i]=x; sy[i]=y; sz[i]=z; stint[i]=rnd();
+    smag[i]=Math.pow(rnd(),3)*0.8+0.2;
+  }
+})();
+const bx=new Float32Array(NB), by=new Float32Array(NB), bz=new Float32Array(NB),
+      bt=new Float32Array(NB), bw=new Float32Array(NB), bm=new Float32Array(NB);
+function spawnB(i,far){
+  const r=0.6+14*Math.sqrt(rnd()), a=rnd()*TAU;
+  bx[i]=Math.cos(a)*r; by[i]=Math.sin(a)*r;
+  bz[i]=far? ZF*(0.85+rnd()*0.15) : 0.4+rnd()*(ZF-0.4);
+  bt[i]=rnd(); bw[i]=0.25+rnd()*0.75; bm[i]=0.3+rnd()*0.7;
+}
+for(let i=0;i<NB;i++) spawnB(i,false);
+
+/* ================== GEOMETRIE / KOKPIT ================== */
+let W,H,dpr,cx,cy,f,wp,wrad,wx0,wx1,wy0,wy1;
+
+function roundedPoly(g,p,r){
+  const n=p.length;
+  for(let i=0;i<n;i++){
+    const a=p[(i+n-1)%n], b=p[i], c=p[(i+1)%n];
+    const d1=Math.hypot(a.x-b.x,a.y-b.y), d2=Math.hypot(c.x-b.x,c.y-b.y);
+    const r1=Math.min(r,d1/2), r2=Math.min(r,d2/2);
+    const x1=b.x+(a.x-b.x)/d1*r1, y1=b.y+(a.y-b.y)/d1*r1;
+    const x2=b.x+(c.x-b.x)/d2*r2, y2=b.y+(c.y-b.y)/d2*r2;
+    if(i===0) g.moveTo(x1,y1); else g.lineTo(x1,y1);
+    g.quadraticCurveTo(b.x,b.y,x2,y2);
+  }
+  g.closePath();
+}
+
+function drawFrame(){
+  const g=fx, u=dpr;
+  g.clearRect(0,0,W,H);
+  g.save();
+  g.beginPath(); g.rect(0,0,W,H); roundedPoly(g,wp,wrad);
+  let gr=g.createLinearGradient(0,0,0,H);
+  gr.addColorStop(0,'#252d40'); gr.addColorStop(.12,'#161c2a'); gr.addColorStop(.7,'#0b0f17'); gr.addColorStop(1,'#04060a');
+  g.fillStyle=gr; g.fill('evenodd');
+  g.clip('evenodd');
+
+  // kartáčovaný kov
+  g.fillStyle='#fff'; g.globalAlpha=.04;
+  for(let y=0;y<H;y+=2*u) if(rnd()<.5) g.fillRect(0,y,W,u*(rnd()<.5?1:.5));
+  g.globalAlpha=1;
+
+  // spáry panelů (diagonální výztuhy do rohů)
+  const seam=(x1,y1,x2,y2)=>{
+    g.lineWidth=2*u; g.strokeStyle='rgba(0,0,0,.7)'; g.beginPath(); g.moveTo(x1,y1); g.lineTo(x2,y2); g.stroke();
+    g.lineWidth=1*u; g.strokeStyle='rgba(150,190,230,.12)'; g.beginPath(); g.moveTo(x1+2*u,y1+2*u); g.lineTo(x2+2*u,y2+2*u); g.stroke();
+  };
+  seam(wp[0].x,wp[0].y,0,H*.02); seam(wp[1].x,wp[1].y,W,H*.02);
+  seam(wp[3].x,wp[3].y,0,H*.82); seam(wp[2].x,wp[2].y,W,H*.82);
+  seam(0,H*.045,W,H*.045);
+  seam(0,H*.985,W,H*.985);
+
+  // okraj palubní desky
+  gr=g.createLinearGradient(0,H*.70,0,H*.75);
+  gr.addColorStop(0,'#3a465e'); gr.addColorStop(.25,'#1b2335'); gr.addColorStop(1,'#0b0f17');
+  g.fillStyle=gr; g.fillRect(0,H*.70,W,H*.05);
+  g.fillStyle='rgba(120,230,255,.35)'; g.fillRect(0,H*.703,W,1.2*u);
+
+  // horní světla
+  const lc=['#5ff','#5ff','#fb4','#5ff','#f55','#5ff','#5f9','#5ff','#fb4'];
+  for(let i=0;i<lc.length;i++){
+    g.shadowColor=lc[i]; g.shadowBlur=12*u; g.fillStyle=lc[i];
+    g.fillRect(W*(.27+i*.058),H*.035,14*u,4*u);
+  }
+  // LED řada nad panely
+  for(let i=0;i<44;i++){
+    const col=['#5ff','#5f9','#fb4','#37a'][(rnd()*4)|0];
+    g.shadowColor=col; g.shadowBlur=8*u; g.fillStyle=col; g.globalAlpha=.4+rnd()*.6;
+    g.beginPath(); g.arc(W*(.07+i*.0205),H*.728,2*u,0,TAU); g.fill();
+  }
+  g.globalAlpha=1; g.shadowBlur=0;
+
+  // nýty kolem okna
+  for(let i=0;i<4;i++){
+    const a=wp[i], b=wp[(i+1)%4], dx=b.x-a.x, dy=b.y-a.y, L=Math.hypot(dx,dy);
+    let nx=dy/L, ny=-dx/L;
+    const mx=(a.x+b.x)/2-cx, my=(a.y+b.y)/2-cy;
+    if(nx*mx+ny*my<0){nx=-nx;ny=-ny;}
+    const cnt=Math.floor(L/(46*u));
+    for(let j=1;j<cnt;j++){
+      const t=j/cnt, px=a.x+dx*t+nx*22*u, py=a.y+dy*t+ny*22*u;
+      g.fillStyle='#05080d'; g.beginPath(); g.arc(px,py,2.6*u,0,TAU); g.fill();
+      g.fillStyle='#34415a'; g.beginPath(); g.arc(px-.5*u,py-.5*u,1.7*u,0,TAU); g.fill();
+    }
+  }
+  // vinětace
+  gr=g.createRadialGradient(W/2,H*.55,H*.3,W/2,H*.55,H*.95);
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(0,0,0,.6)');
+  g.fillStyle=gr; g.fillRect(0,0,W,H);
+  g.restore();
+
+  // rám okna
+  g.lineJoin='round';
+  g.beginPath(); roundedPoly(g,wp,wrad);
+  g.strokeStyle='rgba(6,8,13,.97)'; g.lineWidth=14*u; g.stroke();
+  g.strokeStyle='rgba(140,180,220,.35)'; g.lineWidth=2*u; g.stroke();
+  g.shadowColor='rgba(90,220,255,.9)'; g.shadowBlur=18*u;
+  g.strokeStyle='rgba(120,230,255,.55)'; g.lineWidth=1.2*u; g.stroke();
+  g.shadowBlur=0;
+
+  // sklo
+  g.save();
+  g.beginPath(); roundedPoly(g,wp,wrad); g.clip();
+  gr=g.createRadialGradient(cx,cy,Math.min(W,H)*.25,cx,cy,W*.62);
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(1,'rgba(0,0,12,.55)');
+  g.fillStyle=gr; g.fillRect(0,0,W,H);
+  gr=g.createLinearGradient(0,0,W,H*.7);
+  gr.addColorStop(0,'rgba(255,255,255,.07)'); gr.addColorStop(.25,'rgba(255,255,255,0)');
+  g.fillStyle=gr; g.fillRect(0,0,W,H);
+  g.fillStyle='rgba(255,255,255,.03)';
+  g.beginPath(); g.moveTo(W*.18,H*.08); g.lineTo(W*.31,H*.08); g.lineTo(W*.17,H*.7); g.lineTo(W*.10,H*.7); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(W*.34,H*.08); g.lineTo(W*.37,H*.08); g.lineTo(W*.25,H*.7); g.lineTo(W*.22,H*.7); g.closePath(); g.fill();
+  // zaměřovač
+  const rr=H*.06;
+  g.strokeStyle='rgba(120,235,255,.28)'; g.lineWidth=1.3*u;
+  g.beginPath(); g.arc(cx,cy,rr,0,TAU); g.stroke();
+  g.beginPath();
+  for(let k=0;k<4;k++){ const a=k*Math.PI/2; g.moveTo(cx+Math.cos(a)*rr*1.25,cy+Math.sin(a)*rr*1.25); g.lineTo(cx+Math.cos(a)*rr*1.75,cy+Math.sin(a)*rr*1.75); }
+  g.stroke();
+  g.restore();
+}
+
+function resize(){
+  const w=innerWidth, h=innerHeight;
+  app.style.width=w+'px'; app.style.height=h+'px';
+  app.style.fontSize=Math.max(9,Math.min(w/1180,h/820)*16)+'px';
+  $('start').style.top=(h*0.48)+'px';
+  $('again').style.top=(h*0.44)+'px';
+  dpr=Math.min(window.devicePixelRatio||1,dprCap);
+  W=sky.width=fr.width=Math.round(w*dpr);
+  H=sky.height=fr.height=Math.round(h*dpr);
+  wp=[{x:.055*W,y:.085*H},{x:.945*W,y:.085*H},{x:.90*W,y:.70*H},{x:.10*W,y:.70*H}];
+  wrad=Math.min(W,H)*.045;
+  cx=W/2; cy=.3925*H; f=.62*W;
+  wx0=.05*W; wx1=.95*W; wy0=.075*H; wy1=.71*H;
+  drawFrame();
+}
+
+/* ================== ZVUK ================== */
+let actx=null, oscA, oscB, master, comp;
+function audioInit(){
+  const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
+  actx=new AC();
+  master=actx.createGain(); master.gain.value=0;
+  comp=actx.createDynamicsCompressor();
+  oscA=actx.createOscillator(); oscB=actx.createOscillator();
+  oscA.type='sine'; oscB.type='sine';
+  const gA=actx.createGain(), gB=actx.createGain(); gA.gain.value=1; gB.gain.value=.55;
+  oscA.frequency.value=110; oscB.frequency.value=110.5;
+  oscA.connect(gA); oscB.connect(gB); gA.connect(master); gB.connect(master);
+  master.connect(comp); comp.connect(actx.destination);
+  oscA.start(); oscB.start();
+}
+function audioUpdate(){
+  if(!actx) return;
+  const t=actx.currentTime, s=clamp(st.phi/PHIMAX,0,1);
+  const fq=110*Math.pow(2,3.6*s);                 // 110 Hz -> ~1330 Hz
+  oscA.frequency.setTargetAtTime(fq,t,0.06);
+  oscB.frequency.setTargetAtTime(fq*1.005,t,0.06); // jemné chvění
+  let vol=0;
+  if(soundOn && (st.phase==='accel'||st.phase==='arrive')){
+    vol=0.05+0.17*s;
+    if(st.phase==='accel') vol*=Math.min(1,st.t/1.5);
+    else vol*=Math.exp(-st.arrT/1.8);
+  }
+  master.gain.setTargetAtTime(vol,t,0.1);
+}
+function boom(){
+  if(!actx||!soundOn) return;
+  const t=actx.currentTime, o=actx.createOscillator(), gn=actx.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(220,t); o.frequency.exponentialRampToValueAtTime(38,t+1.8);
+  gn.gain.setValueAtTime(0.0001,t); gn.gain.exponentialRampToValueAtTime(0.5,t+0.03); gn.gain.exponentialRampToValueAtTime(0.0001,t+2.2);
+  o.connect(gn); gn.connect(comp); o.start(t); o.stop(t+2.3);
+}
+
+/* ================== LOGIKA ================== */
+function fcurve(u){ const s=u*u*(3-2*u); return .35*u+.65*s; }
+function update(dt){
+  if(st.phase==='accel'){
+    st.t+=dt;
+    const u=Math.min(1,st.t/TA);
+    st.phi=PHIMAX*fcurve(u);
+    st.h=Math.pow(u,1.9);
+    if(u>=1){ st.phase='arrive'; st.arrT=0; st.flash=1; boom(); }
+  } else if(st.phase==='arrive'){
+    st.arrT+=dt; st.t+=dt;
+    st.phi=PHIMAX*Math.exp(-st.arrT/1.1); if(st.phi<0.003) st.phi=0;
+    st.flash=Math.exp(-st.arrT/0.9);
+    st.h=1;
+    if(st.arrT>4.5 && !endShown){ endShown=true; $('scrEnd').classList.remove('hide'); }
+  }
+  st.D=D0*Math.pow(DEND/D0,st.h);
+  phiVis=2*(1-Math.exp(-st.phi/4));
+  beta=Math.tanh(phiVis);
+  gamma=1/Math.sqrt(1-beta*beta);
+  vis=phiVis/2;
+  vB=150*Math.pow(beta,1.5);
+}
+
+/* ================== VYKRESLENÍ ================== */
+function drawGalaxy(c,time){
+  const h=st.h;
+  const exag=lerp(2.6,1,h);
+  const rad=f*(RGAL/st.D)*exag;
+  const ratio=lerp(0.30,0.72,Math.pow(h,1.2));
+  const offs=lerp(0.02,0.07,h);
+  const gx=cx+W*offs, gy=cy-H*offs*0.6;
+  const need=2*rad/0.94;
+  let mi=0; while(mi<mips.length-1 && mips[mi+1].width>=need) mi++;
+  const spr=mips[mi], sc=need/spr.width;
+  c.save();
+  c.translate(gx,gy); c.rotate(-0.55); c.scale(1,ratio); c.rotate(time*0.004); c.scale(sc,sc);
+  c.drawImage(spr,-spr.width/2,-spr.height/2);
+  if(rad<250*dpr) c.drawImage(spr,-spr.width/2,-spr.height/2); // zesvětlení malé galaxie
+  c.restore();
+}
+
+function drawStarsA(c,time){
+  const b=beta, g=gamma;
+  for(let i=0;i<NA;i++){
+    const z=sz[i];
+    const zp=(z+b)/(1+b*z);                 // relativistická aberace
+    if(zp<0.25) continue;
+    const rho=Math.sqrt(Math.max(1e-9,1-z*z)), rp=Math.sqrt(Math.max(0,1-zp*zp)), k=rp/rho;
+    const px=cx+f*sx[i]*k/zp, py=cy+f*sy[i]*k/zp;
+    if(px<wx0||px>wx1||py<wy0||py>wy1) continue;
+    const D=g*(1+b*z);                      // Dopplerův faktor
+    const shift=Math.log2(D)*3.3;
+    const idx=clamp(Math.round(6+stint[i]*5+shift),0,19);
+    const m=smag[i];
+    let a=m*clamp(Math.pow(D,1.5),0.25,2.2);
+    a*=0.88+0.12*Math.sin(time*(1+(i%5))+i);
+    if(a>1) a=1;
+    const s=(0.8+m*1.4)*dpr;
+    c.globalAlpha=a; c.fillStyle=PAL[idx];
+    c.fillRect(px-s/2,py-s/2,s,s);
+    if(m>0.85){ c.globalAlpha=a*0.16; c.beginPath(); c.arc(px,py,s*3,0,TAU); c.fill(); }
+  }
+  c.globalAlpha=1;
+}
+
+function drawStarsB(c,dt){
+  c.lineCap='round';
+  const len=Math.max(0.012,vB*0.05);
+  for(let i=0;i<NB;i++){
+    let z=bz[i]-vB*dt;
+    if(z<0.35){ spawnB(i,true); z=bz[i]; }
+    bz[i]=z;
+    const zf=z+len;
+    const x1=cx+f*bx[i]/zf, y1=cy+f*by[i]/zf;
+    if(x1<wx0||x1>wx1||y1<wy0||y1>wy1) continue;
+    const x0=cx+f*bx[i]/z, y0=cy+f*by[i]/z;
+    const idx=clamp(Math.round(7+bt[i]*4+vis*9),0,19);
+    const fade=clamp((ZF-z)/8,0,1);
+    c.globalAlpha=fade*(0.35+0.65*bm[i]);
+    c.strokeStyle=PAL[idx];
+    c.lineWidth=Math.min(3.5*dpr,dpr*(0.5+bw[i]*2.2/(1+z*0.25)));
+    c.beginPath(); c.moveTo(x1,y1); c.lineTo(x0,y0); c.stroke();
+  }
+  c.globalAlpha=1;
+}
+
+function drawGlow(c){
+  const e=vis*vis*vis;
+  if(e<0.01) return;
+  let gr=c.createRadialGradient(cx,cy,0,cx,cy,f*0.55);
+  gr.addColorStop(0,`rgba(190,225,255,${0.38*e})`);
+  gr.addColorStop(.4,`rgba(110,160,255,${0.12*e})`);
+  gr.addColorStop(1,'rgba(60,100,255,0)');
+  c.fillStyle=gr; c.fillRect(0,0,W,H);
+}
+
+function render(time,dt){
+  const c=ctx;
+  c.setTransform(1,0,0,1,0,0);
+  c.globalCompositeOperation='source-over'; c.globalAlpha=1;
+  c.fillStyle='#000'; c.fillRect(0,0,W,H);
+  c.save();
+  c.beginPath(); roundedPoly(c,wp,wrad); c.clip();
+
+  let amp=0;
+  if(st.phase==='accel') amp=(0.25+1.6*vis*vis)*dpr;
+  else if(st.phase==='arrive') amp=7*dpr*Math.exp(-st.arrT/0.6);
+  if(amp>0) c.translate((rnd()-.5)*amp,(rnd()-.5)*amp);
+
+  c.globalAlpha=0.95*(1-0.7*vis);
+  c.drawImage(nebula,-30,-30,W+60,H+60);
+  c.globalAlpha=1;
+  c.globalCompositeOperation='lighter';
+  drawGalaxy(c,time);
+  drawStarsA(c,time);
+  drawStarsB(c,dt);
+  drawGlow(c);
+  c.globalCompositeOperation='source-over';
+  if(st.flash>0.01){ c.fillStyle=`rgba(235,245,255,${st.flash})`; c.fillRect(-50,-50,W+100,H+100); }
+  c.restore();
+}
+
+/* ================== HUD ================== */
+const el={v:$('vVal'),g:$('gVal'),d:$('dVal'),bar:$('bar'),p:$('pVal'),st:$('stVal'),eng:$('eng'),tm:$('tmVal')};
+function hud(){
+  const b=Math.tanh(st.phi);
+  const eps=2/(1+Math.exp(2*st.phi));
+  const nines=Math.min(13,Math.floor(-Math.log10(Math.max(eps,1e-16))));
+  el.v.textContent = nines<3 ? b.toFixed(4).replace('.',',')+' c' : '0,'+'9'.repeat(nines)+' c';
+  const gm=Math.cosh(st.phi);
+  el.g.textContent = gm<1000 ? gm.toFixed(2).replace('.',',') : Math.round(gm).toLocaleString('cs-CZ');
+  el.d.textContent = Math.round(st.D).toLocaleString('cs-CZ')+' ly';
+  const prog=clamp((D0-st.D)/(D0-DEND),0,1)*100;
+  el.bar.style.width=prog.toFixed(1)+'%';
+  el.p.textContent='Trasa: '+prog.toFixed(0)+' %';
+  el.eng.style.width=(clamp(st.phi/PHIMAX,0,1)*100).toFixed(1)+'%';
+  let s='PŘIPRAVENA';
+  if(st.phase==='accel') s = st.phi>5 ? 'RYCHLOST SVĚTLA' : 'ZRYCHLUJI';
+  else if(st.phase==='arrive') s = st.arrT>2.2 ? 'DORAZILI JSME' : 'ZPOMALUJI';
+  el.st.textContent=s;
+  const t=Math.floor(st.t), m=Math.floor(t/60), sec=t%60;
+  el.tm.textContent=String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+}
+
+/* ================== OVLÁDÁNÍ ================== */
+function startFlight(){
+  if(!actx) audioInit(); else actx.resume();
+  Object.assign(st,{phase:'accel',t:0,arrT:0,phi:0,h:0,D:D0,flash:0});
+  endShown=false;
+  $('scrStart').classList.add('hide'); $('start').classList.add('hide'); $('start').style.display='none';
+  $('scrEnd').classList.add('hide');
+}
+$('start').addEventListener('click',startFlight);
+$('again').addEventListener('click',startFlight);
+$('btnSound').addEventListener('click',()=>{
+  soundOn=!soundOn; $('btnSound').textContent='ZVUK: '+(soundOn?'ZAP':'VYP');
+  if(actx&&soundOn) actx.resume();
+});
+$('btnFs').addEventListener('click',()=>{
+  const d=document, el=d.documentElement;
+  if(d.fullscreenElement||d.webkitFullscreenElement) (d.exitFullscreen||d.webkitExitFullscreen).call(d);
+  else { const rf=el.requestFullscreen||el.webkitRequestFullscreen; if(rf) rf.call(el); }
+});
+if(!(document.documentElement.requestFullscreen||document.documentElement.webkitRequestFullscreen)) $('btnFs').style.display='none';
+document.addEventListener('visibilitychange',()=>{
+  if(!actx) return;
+  if(document.hidden) actx.suspend(); else actx.resume();
+});
+addEventListener('resize',resize);
+addEventListener('orientationchange',()=>setTimeout(resize,200));
+
+/* ================== START ================== */
+buildGalaxy();
+buildNebula();
+resize();
+
+let last=performance.now(), hudT=1, fpsAcc=0, fpsN=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const raw=(now-last)/1000; last=now;
+  const dt=Math.min(0.05,raw);
+  update(dt);
+  render(now/1000,dt);
+  audioUpdate();
+  hudT+=dt; if(hudT>0.07){ hudT=0; hud(); }
+  // hlídání výkonu - případně sníží rozlišení
+  fpsAcc+=Math.min(raw,0.1); fpsN++;
+  if(fpsN>=90){
+    const avg=fpsAcc/fpsN; fpsAcc=0; fpsN=0;
+    if(avg>0.027 && dprCap>1){ dprCap=Math.max(1,dprCap-0.5); resize(); }
+  }
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
