@@ -33,6 +33,19 @@
   .bar{height:.55em;border-radius:9px;background:rgba(80,200,255,.12);border:1px solid rgba(110,220,255,.3);overflow:hidden;margin:.5em 0 .4em}
   .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2a7cff,#5ff0ff,#fff);box-shadow:0 0 12px #5ff}
 
+  /* hlášení palubního počítače */
+  #msg{position:absolute;left:50%;top:10.5%;transform:translateX(-50%);z-index:4;pointer-events:none;white-space:nowrap;
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:.8em;letter-spacing:.22em;color:#bff;
+    background:rgba(8,26,40,.65);border:1px solid rgba(110,220,255,.45);border-radius:6px;padding:.55em 1.2em;
+    opacity:0;transition:opacity .5s;text-shadow:0 0 10px rgba(90,220,255,.7)}
+  #msg.on{opacity:1}
+  #msg.warn{color:#ffd48a;border-color:rgba(255,190,90,.6);text-shadow:0 0 10px rgba(255,170,60,.7)}
+
+  /* nápověda ke kouli */
+  #hint{position:absolute;left:50%;top:54.5%;transform:translateX(-50%);z-index:4;pointer-events:none;white-space:nowrap;
+    font-size:.7em;letter-spacing:.26em;color:#9fefff;opacity:0;transition:opacity .8s;text-shadow:0 0 10px rgba(90,220,255,.8)}
+  #hint.on{opacity:.8}
+
   /* úvodní a závěrečná obrazovka */
   .scr{position:absolute;left:0;width:100%;text-align:center;color:#e3f8ff;z-index:5;transition:opacity .9s}
   .scr.hide{opacity:0;pointer-events:none}
@@ -52,9 +65,13 @@
   <canvas id="frame"></canvas>
 
   <div id="topbtns">
+    <button class="mini" id="btnPause" style="display:none">ZASTAVIT</button>
     <button class="mini" id="btnSound">ZVUK: ZAP</button>
     <button class="mini" id="btnFs">CELÁ OBRAZOVKA</button>
   </div>
+
+  <div id="msg"></div>
+  <div id="hint">PŘETÁHNI KOULI – ZASTAVÍŠ JI NEBO ROZTOČÍŠ</div>
 
   <div class="panel" id="pL">
     <div class="lbl">RYCHLOST</div>
@@ -83,7 +100,7 @@
   <div class="scr hide" id="scrEnd">
     <h1>VÍTEJTE</h1>
     <p>DORAZILI JSTE DO GALAXIE ANDROMEDA</p>
-    <button class="big" id="again" style="top:44vh;position:absolute;pointer-events:auto">LETĚT ZNOVU</button>
+    <button class="big" id="again" style="top:60vh;position:absolute;pointer-events:auto">LETĚT ZNOVU</button>
   </div>
 </div>
 
@@ -93,6 +110,7 @@
 const $ = id => document.getElementById(id);
 const app = $('app'), sky = $('sky'), fr = $('frame');
 const ctx = sky.getContext('2d'), fx = fr.getContext('2d');
+const MSG = $('msg'), HINT = $('hint');
 const TAU = Math.PI * 2, rnd = Math.random;
 const clamp = (x,a,b) => x<a?a:x>b?b:x;
 const lerp = (a,b,t) => a+(b-a)*t;
@@ -100,18 +118,42 @@ function gauss(){let u=0,v=0;while(!u)u=rnd();while(!v)v=rnd();return Math.sqrt(
 
 /* ================== NASTAVENÍ ================== */
 const D0 = 2.5e6;      // vzdálenost k Andromedě [ly]
-const DEND = 6e4;      // v jaké vzdálenosti letíme "dovnitř" galaxie [ly]
+const DEND = 3e4;      // NOVÉ: v jaké vzdálenosti od středu končíme (dřív 60 000) – letíme hluboko do galaxie
 const RGAL = 1.1e5;    // poloměr galaxie [ly]
-const TA = 70;         // délka zrychlování v sekundách
+const TA = 140;        // délka zrychlování v sekundách
 const PHIMAX = 16;     // maximální "rapidity" (v = tanh(phi), gamma = cosh(phi))
 const NA = 2600;       // hvězdy na pozadí (aberace + Dopplerův jev)
 const NB = 800;        // blízké hvězdy (čáry)
 const ZF = 45;
 
+/* zvuk a koule */
+const F_START = 440;   // Hz – střední frekvence na začátku
+const F_RATIO = 4;     // na konci zrychlování 440 × 4 = 1760 Hz
+const SPH_DELAY = 1.0; // s po příletu, kdy se koule začne objevovat
+const SPH_SPIN = 0.15; // NOVÉ: základní otáčení – otáček za sekundu (dřív 1) = 1 otáčka za ~6,7 s
+const SPH_FRICT = 3;   // NOVÉ: s – za jak dlouho se rychle roztočená koule zpomalí zpátky na základní rychlost
+const SPH_COLOR_T = 8; // NOVÉ: s – barva koule přejde na další za tuto dobu
+const SPH_SIZE = 0.25; // průměr koule = 1/4 výšky displeje
+
+/* plynulé zastavení / rozjezd */
+const STOP_T = 2.4;    // s – doba plynulého brzdění do úplného stání
+const GO_T1  = 1.2;    // s – doba rozjezdu (zrychlení je vyšší než při brzdění)
+const GO_T2  = 2.4;    // s – doba, během které loď "dožene" ztracený čas (překmit nad 100 %)
+
+/* NOVÉ: náhodné události */
+const EV_FIRST = [7,12];   // s letu – kdy přijde první událost (od–do)
+const EV_GAP   = [8,18];   // s letu – odstup mezi událostmi (od–do)
+
 /* ================== STAV ================== */
 const st = {phase:'idle', t:0, arrT:0, phi:0, h:0, D:D0, flash:0};
 let phiVis=0, beta=0, gamma=1, vis=0, vB=0, endShown=false;
 let dprCap = 2, soundOn = true;
+let paused = false;      // uživatel chce stát
+let halted = false;      // loď už opravdu stojí
+let rate = 1;            // 0..~1.5 – "rychlost času" letu (plynule se mění)
+let ramp = null;         // probíhající brzdění / rozjezd
+let phiE = 0;            // skutečná okamžitá rapidity = st.phi * min(rate,1)
+const SM = u => u*u*(3-2*u);
 
 /* ================== PALETA ================== */
 const PAL = [];
@@ -211,6 +253,99 @@ function buildNebula(){
     }
   };
   blob(22,120,380,0.03,0.09); blob(60,25,110,0.02,0.05);
+}
+
+/* ================== 3D KOULE (software rendering do canvasu) ================== */
+const SN=256, TW=512, TH=256, SPH_TILT=0.35;
+let sphCv, sphG, sphImg, sTx, sTy, sSh, sSp, sA, sTex;
+let sphCols=[], lastHue=0;
+/* NOVÉ: ovládání koule tažením */
+let sphAng=0;            // aktuální natočení (v otáčkách)
+let sphVel=SPH_SPIN;     // aktuální úhlová rychlost (otáčky za sekundu)
+let sphDrag=null;        // probíhající tažení
+let sphTouched=false;    // uživatel už kouli zkusil
+let sphSize=0;           // aktuální průměr koule v pixelech plátna
+
+function hsl2rgb(h,s,l){
+  const a=s*Math.min(l,1-l);
+  const f=n=>{ const k=(n+h*12)%12; return (l-a*Math.max(-1,Math.min(k-3,9-k,1)))*255; };
+  return [f(0),f(8),f(4)];
+}
+function newCol(){
+  let h,d;
+  do{ h=rnd(); d=Math.abs(h-lastHue); d=Math.min(d,1-d); }while(d<0.15); // dost odlišný odstín
+  lastHue=h;
+  return hsl2rgb(h,0.85,0.55);
+}
+function resetSphere(){ sphCols=[newCol(),newCol()]; sphAng=0; sphVel=SPH_SPIN; sphDrag=null; sphTouched=false; sphSize=0; }
+
+function buildSphere(){
+  // textura (pruhy + skvrny), aby byla rotace vidět
+  const tc=document.createElement('canvas'); tc.width=TW; tc.height=TH;
+  const tg=tc.getContext('2d');
+  tg.fillStyle='#fff'; tg.fillRect(0,0,TW,TH);
+  tg.fillStyle='rgba(0,0,0,.35)';
+  for(let x=0;x<TW;x+=64) tg.fillRect(x,0,18,TH);          // svislé pruhy
+  tg.fillStyle='rgba(0,0,0,.18)';
+  for(let y=20;y<TH;y+=48) tg.fillRect(0,y,TW,10);          // vodorovné pruhy
+  for(let i=0;i<26;i++){
+    tg.fillStyle=rnd()<.5?'rgba(0,0,0,.55)':'rgba(255,255,255,.9)';
+    tg.beginPath(); tg.arc(rnd()*TW,25+rnd()*(TH-50),8+rnd()*14,0,TAU); tg.fill();
+  }
+  const td=tg.getImageData(0,0,TW,TH).data;
+  sTex=new Float32Array(TW*TH);
+  for(let i=0;i<TW*TH;i++) sTex[i]=0.3+0.7*(td[i*4]/255);
+
+  // předpočítaná geometrie koule (statická, jen se otáčí textura)
+  const N=SN*SN;
+  sTx=new Float32Array(N); sTy=new Uint16Array(N); sSh=new Float32Array(N);
+  sSp=new Float32Array(N); sA=new Uint8Array(N);
+  const cT=Math.cos(SPH_TILT), sT=Math.sin(SPH_TILT);
+  let lx=-0.5, ly=0.6, lz=0.65; const ll=Math.hypot(lx,ly,lz); lx/=ll; ly/=ll; lz/=ll;
+  let hx=lx, hy=ly, hz=lz+1; const hl=Math.hypot(hx,hy,hz); hx/=hl; hy/=hl; hz/=hl;
+  for(let py=0;py<SN;py++) for(let px=0;px<SN;px++){
+    const i=py*SN+px;
+    const x=(px+.5)/SN*2-1, y=-((py+.5)/SN*2-1), rr=x*x+y*y, r=Math.sqrt(rr);
+    if(r>1) continue;
+    const nz=Math.sqrt(Math.max(0,1-rr));
+    const qx=x*cT+y*sT, qy=-x*sT+y*cT, qz=nz;             // náklon osy otáčení
+    const lon=Math.atan2(qx,qz), lat=Math.asin(clamp(qy,-1,1));
+    sTx[i]=lon/TAU+0.5;
+    sTy[i]=clamp(Math.floor((0.5-lat/Math.PI)*TH),0,TH-1);
+    sSh[i]=0.22+0.9*Math.max(0,x*lx+y*ly+nz*lz);
+    sSp[i]=Math.pow(Math.max(0,x*hx+y*hy+nz*hz),40)*110;
+    sA[i]=Math.round(clamp((1-r)*SN*0.5,0,1)*255);
+  }
+  sphCv=document.createElement('canvas'); sphCv.width=sphCv.height=SN;
+  sphG=sphCv.getContext('2d');
+  sphImg=sphG.createImageData(SN,SN);
+  resetSphere();
+}
+
+function drawSphere(c){
+  if(st.phase!=='arrive') return;
+  const ts=st.arrT-SPH_DELAY;                 // čas koule (při brzdění se plynule zpomaluje)
+  if(ts<=0) return;
+  const k=clamp(ts/1.5,0,1), sc=k*k*(3-2*k);  // plynulé objevení
+  const revs=sphAng;                          // natočení řídí uživatel / setrvačnost
+  const cs=ts/SPH_COLOR_T, seg=Math.floor(cs), fq=cs-seg;   // barva se mění podle času, ne podle otáčení
+  while(sphCols.length<=seg+1) sphCols.push(newCol());
+  const A=sphCols[seg], B=sphCols[seg+1];
+  const cr=lerp(A[0],B[0],fq), cg=lerp(A[1],B[1],fq), cb=lerp(A[2],B[2],fq);
+
+  const d=sphImg.data;
+  for(let i=0;i<SN*SN;i++){
+    const al=sA[i]; if(!al) continue;
+    let u=sTx[i]-revs; u-=Math.floor(u);
+    const sh=sSh[i]*sTex[sTy[i]*TW+((u*TW)|0)];
+    const j=i*4, sp=sSp[i];
+    d[j]=cr*sh+sp; d[j+1]=cg*sh+sp; d[j+2]=cb*sh+sp; d[j+3]=al;
+  }
+  sphG.putImageData(sphImg,0,0);
+
+  sphSize=H*SPH_SIZE*sc;
+  c.imageSmoothingEnabled=true;
+  c.drawImage(sphCv,cx-sphSize/2,cy-sphSize/2,sphSize,sphSize);
 }
 
 /* ================== HVĚZDY ================== */
@@ -356,7 +491,7 @@ function resize(){
   app.style.width=w+'px'; app.style.height=h+'px';
   app.style.fontSize=Math.max(9,Math.min(w/1180,h/820)*16)+'px';
   $('start').style.top=(h*0.48)+'px';
-  $('again').style.top=(h*0.44)+'px';
+  $('again').style.top=(h*0.60)+'px';
   dpr=Math.min(window.devicePixelRatio||1,dprCap);
   W=sky.width=fr.width=Math.round(w*dpr);
   H=sky.height=fr.height=Math.round(h*dpr);
@@ -368,31 +503,40 @@ function resize(){
 }
 
 /* ================== ZVUK ================== */
-let actx=null, oscA, oscB, master, comp;
+/* Jeden oscilátor (čistý sinus) – výška i hlasitost sledují skutečnou rychlost lodi (phiE).
+   NOVÉ: sběrnice evBus pro zvuky náhodných událostí (ztlumuje se spolu s rychlostí lodi). */
+let actx=null, oscA, master, comp, evBus, noiseBuf;
 function audioInit(){
   const AC=window.AudioContext||window.webkitAudioContext; if(!AC) return;
   actx=new AC();
   master=actx.createGain(); master.gain.value=0;
   comp=actx.createDynamicsCompressor();
-  oscA=actx.createOscillator(); oscB=actx.createOscillator();
-  oscA.type='sine'; oscB.type='sine';
-  const gA=actx.createGain(), gB=actx.createGain(); gA.gain.value=1; gB.gain.value=.55;
-  oscA.frequency.value=110; oscB.frequency.value=110.5;
-  oscA.connect(gA); oscB.connect(gB); gA.connect(master); gB.connect(master);
+  oscA=actx.createOscillator();
+  const wave=actx.createPeriodicWave(new Float32Array([0,0]), new Float32Array([0,1])); // čistý sinus
+  oscA.setPeriodicWave(wave);
+  const gA=actx.createGain(); gA.gain.value=1.4;
+  oscA.frequency.value=F_START;
+  oscA.connect(gA); gA.connect(master);
   master.connect(comp); comp.connect(actx.destination);
-  oscA.start(); oscB.start();
+  oscA.start();
+
+  evBus=actx.createGain(); evBus.gain.value=1; evBus.connect(comp);
+  noiseBuf=actx.createBuffer(1,actx.sampleRate*2,actx.sampleRate);
+  const nd=noiseBuf.getChannelData(0);
+  for(let i=0;i<nd.length;i++) nd[i]=rnd()*2-1;
 }
 function audioUpdate(){
-  if(!actx) return;
-  const t=actx.currentTime, s=clamp(st.phi/PHIMAX,0,1);
-  const fq=110*Math.pow(2,3.6*s);                 // 110 Hz -> ~1330 Hz
+  if(!actx || halted) return;
+  const t=actx.currentTime, s=clamp(phiE/PHIMAX,0,1);
+  evBus.gain.setTargetAtTime(soundOn?clamp(rate,0,1):0,t,0.08);
+  const fq=F_START*Math.pow(F_RATIO,s);           // 440 Hz -> 1760 Hz, plynule
   oscA.frequency.setTargetAtTime(fq,t,0.06);
-  oscB.frequency.setTargetAtTime(fq*1.005,t,0.06); // jemné chvění
   let vol=0;
   if(soundOn && (st.phase==='accel'||st.phase==='arrive')){
     vol=0.05+0.17*s;
     if(st.phase==='accel') vol*=Math.min(1,st.t/1.5);
     else vol*=Math.exp(-st.arrT/1.8);
+    vol*=clamp(rate,0,1);                          // plynulé ztlumení při brzdění
   }
   master.gain.setTargetAtTime(vol,t,0.1);
 }
@@ -404,24 +548,271 @@ function boom(){
   o.connect(gn); gn.connect(comp); o.start(t); o.stop(t+2.3);
 }
 
+/* pomocné zvuky pro události */
+function tone(fr0,t0,d,v,type,f2,a){        // tón s obálkou (a = nástup v s)
+  const o=actx.createOscillator(), g=actx.createGain(), at=a||Math.min(0.02,d/3);
+  o.type=type||'sine'; o.frequency.setValueAtTime(fr0,t0);
+  if(f2) o.frequency.exponentialRampToValueAtTime(f2,t0+d);
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(v,t0+at);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+d);
+  o.connect(g); g.connect(evBus); o.start(t0); o.stop(t0+d+0.05);
+}
+function noise(t0,d,v,f1,f2,q){             // šum procházející pásmovou propustí (svištění, výbuchy)
+  const s=actx.createBufferSource(); s.buffer=noiseBuf; s.loop=true;
+  const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=q||1;
+  bp.frequency.setValueAtTime(f1,t0); bp.frequency.exponentialRampToValueAtTime(f2,t0+d);
+  const g=actx.createGain();
+  g.gain.setValueAtTime(0.0001,t0);
+  g.gain.exponentialRampToValueAtTime(v,t0+d*0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001,t0+d);
+  s.connect(bp); bp.connect(g); g.connect(evBus); s.start(t0); s.stop(t0+d+0.05);
+}
+
+/* ================== NÁHODNÉ UDÁLOSTI ================== */
+const EVT=['meteor','pulsar','grav','nova','micro','signal','nebula'];
+const evs=[];            // právě probíhající události
+let nextEv=9, lastEv='', msgT=0;
+
+const SHOW_LABELS = false;
+
+function notify(txt,warn){
+  if(SHOW_LABELS){ MSG.textContent=txt; MSG.classList.toggle('warn',!!warn); MSG.classList.add('on'); msgT=4.5; }
+  if(actx&&soundOn){ const t=actx.currentTime+0.02; tone(1250,t,0.09,0.05); tone(1650,t+0.11,0.12,0.05); }
+}
+function hideMsg(){ msgT=0; MSG.classList.remove('on'); }
+const rx=()=>lerp(wx0+W*0.08,wx1-W*0.08,rnd());
+const ry=()=>lerp(wy0+H*0.05,wy1-H*0.05,rnd());
+
+function spawnEvent(){
+  let type; do{ type=EVT[(rnd()*EVT.length)|0]; }while(type===lastEv);
+  lastEv=type;
+  const e={type,t:0,dur:5};
+  const snd=!!(actx&&soundOn), at=snd?actx.currentTime+0.05:0;
+
+  if(type==='meteor'){                       // roj úlomků – světelné čáry přes okno + svištění
+    const n=1+((rnd()*4)|0); e.s=[]; let t=0.1;
+    for(let i=0;i<n;i++){
+      const d=0.6+rnd()*0.6, l2r=rnd()<.5;
+      e.s.push({t0:t,d,x0:l2r?wx0:wx1,x1:l2r?wx1:wx0,y0:ry(),y1:ry(),w:1.5+rnd()*2});
+      if(snd) noise(at+t,d*1.6,0.22+rnd()*0.1,2600+rnd()*1500,300,1.2);
+      t+=0.25+rnd()*0.9;
+    }
+    e.dur=t+1;
+    notify('VAROVÁNÍ: PRŮLET ÚLOMKŮ',true);
+  }
+  else if(type==='pulsar'){                  // pulsující paprsky + tikání
+    e.dur=8; e.x=lerp(wx0+W*.15,wx1-W*.15,rnd()); e.y=lerp(wy0+H*.1,wy1-H*.1,rnd()); e.tilt=rnd()*TAU;
+    if(snd) for(let k=0;k<10;k++){ tone(1700,at+k*0.8,0.07,0.09); tone(85,at+k*0.8,0.18,0.12); }
+    notify('DETEKOVÁN PULSAR');
+  }
+  else if(type==='grav'){                    // gravitační vlna – rozbíhající se prstence + hluboký tón
+    e.dur=4.5; e.x=lerp(.3,.7,rnd())*W; e.y=lerp(.2,.5,rnd())*H;
+    if(snd){ tone(120,at,3.6,0.4,'sine',32,0.4); tone(240,at+0.3,3,0.12,'sine',70,0.5); noise(at,3.5,0.12,300,60,0.8); }
+    notify('GRAVITAČNÍ VLNA ZACHYCENA');
+  }
+  else if(type==='nova'){                    // supernova – záblesk, žhnoucí koule a rázová vlna
+    e.dur=6; e.x=rx(); e.y=ry();
+    if(snd){ tone(170,at,2.4,0.5,'sine',28,0.01); noise(at,3,0.35,1500,120,0.7); tone(900,at,0.5,0.06,'sine',200); }
+    notify('SUPERNOVA V DOSAHU SENZORŮ',true);
+  }
+  else if(type==='micro'){                   // nárazy mikrometeoritů do skla
+    const n=6+((rnd()*6)|0); e.h=[]; let t=0.2;
+    for(let i=0;i<n;i++){
+      t+=0.1+rnd()*0.45;
+      e.h.push({t0:t,x:rx(),y:ry(),a:Array.from({length:7},()=>rnd()*TAU),l:Array.from({length:7},()=>8+rnd()*22)});
+      if(snd){ noise(at+t,0.09,0.25,4000,1800,2); tone(1100+rnd()*600,at+t,0.07,0.08,'triangle',400); }
+    }
+    e.dur=t+1.1;
+    notify('NÁRAZY MIKROMETEORITŮ',true);
+  }
+  else if(type==='signal'){                  // neznámý signál – pípání, šum, osciloskop
+    const n=7+((rnd()*6)|0), sc=[392,440,523,587,659,784,880]; e.n=[]; let t=0.6;
+    for(let i=0;i<n;i++){
+      const d=0.08+rnd()*0.16; e.n.push({t0:t,d});
+      if(snd) tone(sc[(rnd()*sc.length)|0]*(rnd()<.3?2:1),at+t,d,0.07,'triangle');
+      t+=d+0.06+rnd()*0.12;
+    }
+    e.dur=t+1.2;
+    if(snd) noise(at,e.dur,0.05,1800,1800,0.5);
+    notify('PŘIJÍMÁM NEZNÁMÝ SIGNÁL');
+  }
+  else {                                     // barevná mlhovina přeplouvá přes okno + jemný akord
+    const cols=[[160,70,255],[60,150,255],[255,90,150],[60,220,180],[255,170,80]];
+    e.c=cols[(rnd()*cols.length)|0]; e.c2=cols[(rnd()*cols.length)|0];
+    e.dir=rnd()<.5?1:-1; e.oy=(rnd()-.5)*H*.3; e.dur=10;
+    if(snd) for(const fq of [146.8,220,277.2,440]) tone(fq,at,9,0.04,'sine',null,3.5);
+    notify('PRŮLET MLHOVINOU');
+  }
+  evs.push(e);
+}
+function stepEvents(dt){
+  for(let i=evs.length-1;i>=0;i--){ evs[i].t+=dt; if(evs[i].t>evs[i].dur) evs.splice(i,1); }
+}
+function evShake(){                          // otřesy způsobené událostmi (v pixelech plátna)
+  let s=0;
+  for(const e of evs){
+    if(e.type==='grav') s+=3*Math.sin(Math.PI*clamp(e.t/e.dur,0,1));
+    else if(e.type==='nova') s+=8*Math.exp(-e.t/0.45);
+    else if(e.type==='micro') for(const h of e.h){ const a=e.t-h.t0; if(a>=0) s+=5*Math.exp(-a/0.1); }
+  }
+  return s*dpr;
+}
+function drawEvents(c){
+  if(!evs.length) return;
+  for(const e of evs){
+    const u=clamp(e.t/e.dur,0,1), env=Math.sin(Math.PI*u);
+    if(e.type==='meteor'){
+      c.lineCap='round';
+      for(const s of e.s){
+        const a=(e.t-s.t0)/s.d; if(a<0||a>1) continue;
+        const k=Math.sin(Math.PI*a);
+        const hx=lerp(s.x0,s.x1,a), hy=lerp(s.y0,s.y1,a);
+        const ta=Math.max(0,a-0.3), tx=lerp(s.x0,s.x1,ta), ty=lerp(s.y0,s.y1,ta);
+        const g=c.createLinearGradient(tx,ty,hx,hy);
+        g.addColorStop(0,'rgba(255,150,70,0)'); g.addColorStop(1,`rgba(255,248,230,${(0.95*k).toFixed(3)})`);
+        c.strokeStyle=g; c.lineWidth=s.w*dpr;
+        c.beginPath(); c.moveTo(tx,ty); c.lineTo(hx,hy); c.stroke();
+        const r=(10+s.w*5)*dpr, gg=c.createRadialGradient(hx,hy,0,hx,hy,r);
+        gg.addColorStop(0,`rgba(255,240,210,${(0.9*k).toFixed(3)})`); gg.addColorStop(1,'rgba(255,160,80,0)');
+        c.fillStyle=gg; c.fillRect(hx-r,hy-r,2*r,2*r);
+      }
+    }
+    else if(e.type==='pulsar'){
+      const th=e.t*TAU/1.6, fl=Math.pow(Math.abs(Math.cos(th)),24), L=W*0.5;
+      c.save(); c.translate(e.x,e.y); c.rotate(e.tilt);
+      const g=c.createLinearGradient(-L,0,L,0);
+      g.addColorStop(0,'rgba(140,200,255,0)'); g.addColorStop(.5,'rgba(225,245,255,1)'); g.addColorStop(1,'rgba(140,200,255,0)');
+      const bh=(1.2+4*fl)*dpr;
+      c.globalAlpha=clamp(env*(0.06+0.94*fl),0,1); c.fillStyle=g; c.fillRect(-L,-bh/2,2*L,bh);
+      c.globalAlpha=1;
+      const r=(12+60*fl)*dpr, gg=c.createRadialGradient(0,0,0,0,0,r);
+      gg.addColorStop(0,`rgba(255,255,255,${(env*(0.5+0.5*fl)).toFixed(3)})`);
+      gg.addColorStop(.3,`rgba(160,210,255,${(0.45*env*(0.3+fl)).toFixed(3)})`);
+      gg.addColorStop(1,'rgba(100,150,255,0)');
+      c.fillStyle=gg; c.fillRect(-r,-r,2*r,2*r);
+      c.restore();
+    }
+    else if(e.type==='grav'){
+      for(let k=0;k<2;k++){
+        const uu=clamp((e.t-k*0.5)/(e.dur-0.5),0,1); if(uu<=0||uu>=1) continue;
+        const r=W*(0.04+0.8*(1-(1-uu)*(1-uu))), a=(1-uu)*Math.min(1,uu*8)*(k?0.55:1);
+        const g=c.createRadialGradient(e.x,e.y,r*0.7,e.x,e.y,r*1.04);
+        g.addColorStop(0,'rgba(80,140,255,0)');
+        g.addColorStop(.7,`rgba(90,150,255,${(0.2*a).toFixed(3)})`);
+        g.addColorStop(.9,`rgba(215,238,255,${(0.75*a).toFixed(3)})`);
+        g.addColorStop(1,'rgba(80,140,255,0)');
+        c.fillStyle=g; c.fillRect(0,0,W,H);
+      }
+    }
+    else if(e.type==='nova'){
+      const fl=0.28*Math.exp(-e.t/0.3);
+      if(fl>0.01){ c.fillStyle=`rgba(225,238,255,${fl.toFixed(3)})`; c.fillRect(0,0,W,H); }
+      const r=f*(0.04+0.5*(1-Math.pow(1-u,2.2))), a=Math.pow(1-u,1.2);
+      const g=c.createRadialGradient(e.x,e.y,0,e.x,e.y,r);
+      g.addColorStop(0,`rgba(255,255,255,${a.toFixed(3)})`);
+      g.addColorStop(.2,`rgba(205,225,255,${(0.75*a).toFixed(3)})`);
+      g.addColorStop(.55,`rgba(110,150,255,${(0.28*a).toFixed(3)})`);
+      g.addColorStop(1,'rgba(110,70,220,0)');
+      c.fillStyle=g; c.fillRect(e.x-r,e.y-r,2*r,2*r);
+      c.strokeStyle=`rgba(190,215,255,${(0.5*a).toFixed(3)})`; c.lineWidth=2*dpr;
+      c.beginPath(); c.arc(e.x,e.y,r*0.98,0,TAU); c.stroke();
+    }
+    else if(e.type==='micro'){
+      c.lineCap='round';
+      for(const h of e.h){
+        const a=e.t-h.t0; if(a<0||a>1) continue;
+        const k=1-a, r=(8+22*Math.exp(-a*10))*dpr;
+        const g=c.createRadialGradient(h.x,h.y,0,h.x,h.y,r);
+        g.addColorStop(0,`rgba(255,255,255,${k.toFixed(3)})`); g.addColorStop(1,'rgba(100,180,255,0)');
+        c.fillStyle=g; c.fillRect(h.x-r,h.y-r,2*r,2*r);
+        const grow=1-Math.exp(-a*30);
+        c.strokeStyle=`rgba(190,230,255,${(0.7*k).toFixed(3)})`; c.lineWidth=dpr;
+        c.beginPath();
+        for(let i=0;i<h.a.length;i++){
+          c.moveTo(h.x,h.y); c.lineTo(h.x+Math.cos(h.a[i])*h.l[i]*dpr*grow,h.y+Math.sin(h.a[i])*h.l[i]*dpr*grow);
+        }
+        c.stroke();
+      }
+    }
+    else if(e.type==='signal'){
+      c.fillStyle='rgb(120,255,210)';
+      for(let i=0;i<10;i++){ c.globalAlpha=env*0.07*rnd(); c.fillRect(wx0,wy0+rnd()*(wy1-wy0),wx1-wx0,(1+rnd()*2)*dpr); }
+      let amp=0.12; for(const n of e.n) if(e.t>=n.t0&&e.t<=n.t0+n.d){ amp=1; break; }
+      const w=W*0.26, x0=cx-w/2, y0=wy1-H*0.075, A=H*0.03*amp*env+H*0.003;
+      c.globalAlpha=env*0.9; c.strokeStyle='rgb(130,255,215)'; c.lineWidth=1.5*dpr; c.lineCap='round';
+      c.beginPath();
+      for(let i=0;i<=80;i++){
+        const x=x0+w*i/80, y=y0+Math.sin(i*0.9+e.t*40)*A*Math.sin(Math.PI*i/80)*(0.6+0.4*rnd());
+        if(i) c.lineTo(x,y); else c.moveTo(x,y);
+      }
+      c.stroke(); c.globalAlpha=1;
+    }
+    else if(e.type==='nebula'){
+      const al=env*0.38, px=cx+e.dir*W*(0.6-1.2*u), r=W*0.75;
+      for(let k=0;k<2;k++){
+        const col=k?e.c2:e.c, x=px+k*e.dir*W*0.25, y=cy+e.oy+k*H*0.12, rr=r*(1-0.25*k);
+        const g=c.createRadialGradient(x,y,0,x,y,rr);
+        g.addColorStop(0,`rgba(${col[0]},${col[1]},${col[2]},${(al*(k?0.7:1)).toFixed(3)})`);
+        g.addColorStop(1,`rgba(${col[0]},${col[1]},${col[2]},0)`);
+        c.fillStyle=g; c.fillRect(0,0,W,H);
+      }
+    }
+  }
+}
+
+/* ================== PLYNULÉ ZASTAVENÍ / ROZJEZD ================== */
+/* rate = "rychlost času" letu.
+   STOP: rate = r0 * (1 - smoothstep)           -> klesá od aktuální hodnoty plynule do 0
+   GO:   rate = r0 + (1-r0)*smoothstep + bump    -> rozjede se rychleji než brzdí a krátce přeletí nad 100 %,
+         plocha překmitu se přesně rovná času, který se při rozjezdu ztratil. */
+function updateRate(dt){
+  if(!ramp) return;
+  ramp.t+=dt;
+  if(ramp.type==='stop'){
+    const u=clamp(ramp.t/STOP_T,0,1);
+    rate=ramp.r0*(1-SM(u));
+    if(u>=1){
+      rate=0; ramp=null; halted=true;
+      if(actx) actx.suspend();                      // zvuk už je v tuto chvíli ztišený na nulu
+    }
+  } else {
+    const r0=Math.min(ramp.r0,1);
+    const u=clamp(ramp.t/GO_T1,0,1);
+    const B=(1-r0)*GO_T1/GO_T2;
+    const w=ramp.t<GO_T2 ? Math.sin(Math.PI*ramp.t/GO_T2) : 0;
+    rate=r0+(1-r0)*SM(u)+B*w*w;
+    if(ramp.t>=GO_T2){ rate=1; ramp=null; }
+  }
+}
+
 /* ================== LOGIKA ================== */
 function fcurve(u){ const s=u*u*(3-2*u); return .35*u+.65*s; }
-function update(dt){
+function update(dt){   // dt je už vynásobené rate
   if(st.phase==='accel'){
     st.t+=dt;
     const u=Math.min(1,st.t/TA);
     st.phi=PHIMAX*fcurve(u);
-    st.h=Math.pow(u,1.9);
-    if(u>=1){ st.phase='arrive'; st.arrT=0; st.flash=1; boom(); }
+    st.h=Math.pow(u,1.5);                      // NOVÉ: přibližování začíná dřív (dřív u^1,9)
+    stepEvents(dt);
+    if(st.t>=nextEv && st.t<TA-10){ spawnEvent(); nextEv=st.t+EV_GAP[0]+rnd()*(EV_GAP[1]-EV_GAP[0]); }
+    if(u>=1){ st.phase='arrive'; st.arrT=0; st.flash=1; evs.length=0; hideMsg(); boom(); }
   } else if(st.phase==='arrive'){
     st.arrT+=dt; st.t+=dt;
     st.phi=PHIMAX*Math.exp(-st.arrT/1.1); if(st.phi<0.003) st.phi=0;
     st.flash=Math.exp(-st.arrT/0.9);
     st.h=1;
+    // NOVÉ: koule – setrvačnost; zastavená zůstane stát, rychle roztočená se zpomalí na základní rychlost
+    if(!sphDrag){
+      sphAng+=sphVel*dt;
+      const av=Math.abs(sphVel);
+      if(av>SPH_SPIN) sphVel=Math.sign(sphVel)*(SPH_SPIN+(av-SPH_SPIN)*Math.exp(-dt/SPH_FRICT));
+    }
     if(st.arrT>4.5 && !endShown){ endShown=true; $('scrEnd').classList.remove('hide'); }
   }
   st.D=D0*Math.pow(DEND/D0,st.h);
-  phiVis=2*(1-Math.exp(-st.phi/4));
+  phiE=st.phi*clamp(rate,0,1);                 // skutečná okamžitá rychlost (při brzdění klesá k 0)
+  phiVis=2*(1-Math.exp(-phiE/4));
   beta=Math.tanh(phiVis);
   gamma=1/Math.sqrt(1-beta*beta);
   vis=phiVis/2;
@@ -431,10 +822,10 @@ function update(dt){
 /* ================== VYKRESLENÍ ================== */
 function drawGalaxy(c,time){
   const h=st.h;
-  const exag=lerp(2.6,1,h);
+  const exag=lerp(4.5,1,Math.pow(h,0.8));             // NOVÉ: větší na začátku
   const rad=f*(RGAL/st.D)*exag;
-  const ratio=lerp(0.30,0.72,Math.pow(h,1.2));
-  const offs=lerp(0.02,0.07,h);
+  const ratio=lerp(0.30,0.85,Math.pow(h,1.2));         // NOVÉ: při přiblížení se skloní víc "zpříma"
+  const offs=lerp(0.04,0.0,Math.pow(h,1.3));           // NOVÉ: střed galaxie se posune doprostřed
   const gx=cx+W*offs, gy=cy-H*offs*0.6;
   const need=2*rad/0.94;
   let mi=0; while(mi<mips.length-1 && mips[mi+1].width>=need) mi++;
@@ -512,7 +903,9 @@ function render(time,dt){
   let amp=0;
   if(st.phase==='accel') amp=(0.25+1.6*vis*vis)*dpr;
   else if(st.phase==='arrive') amp=7*dpr*Math.exp(-st.arrT/0.6);
-  if(amp>0) c.translate((rnd()-.5)*amp,(rnd()-.5)*amp);
+  amp*=clamp(rate,0,1);                               // třas plynule ustává spolu s rychlostí
+  amp+=evShake()*clamp(rate,0,1);                     // otřesy od událostí
+  if(amp>0.001) c.translate((rnd()-.5)*amp,(rnd()-.5)*amp);
 
   c.globalAlpha=0.95*(1-0.7*vis);
   c.drawImage(nebula,-30,-30,W+60,H+60);
@@ -522,7 +915,10 @@ function render(time,dt){
   drawStarsA(c,time);
   drawStarsB(c,dt);
   drawGlow(c);
+  drawEvents(c);
+  c.globalAlpha=1;
   c.globalCompositeOperation='source-over';
+  drawSphere(c);
   if(st.flash>0.01){ c.fillStyle=`rgba(235,245,255,${st.flash})`; c.fillRect(-50,-50,W+100,H+100); }
   c.restore();
 }
@@ -530,38 +926,60 @@ function render(time,dt){
 /* ================== HUD ================== */
 const el={v:$('vVal'),g:$('gVal'),d:$('dVal'),bar:$('bar'),p:$('pVal'),st:$('stVal'),eng:$('eng'),tm:$('tmVal')};
 function hud(){
-  const b=Math.tanh(st.phi);
-  const eps=2/(1+Math.exp(2*st.phi));
+  const b=Math.tanh(phiE);
+  const eps=2/(1+Math.exp(2*phiE));
   const nines=Math.min(13,Math.floor(-Math.log10(Math.max(eps,1e-16))));
   el.v.textContent = nines<3 ? b.toFixed(4).replace('.',',')+' c' : '0,'+'9'.repeat(nines)+' c';
-  const gm=Math.cosh(st.phi);
+  const gm=Math.cosh(phiE);
   el.g.textContent = gm<1000 ? gm.toFixed(2).replace('.',',') : Math.round(gm).toLocaleString('cs-CZ');
   el.d.textContent = Math.round(st.D).toLocaleString('cs-CZ')+' ly';
   const prog=clamp((D0-st.D)/(D0-DEND),0,1)*100;
   el.bar.style.width=prog.toFixed(1)+'%';
   el.p.textContent='Trasa: '+prog.toFixed(0)+' %';
-  el.eng.style.width=(clamp(st.phi/PHIMAX,0,1)*100).toFixed(1)+'%';
+  el.eng.style.width=(clamp(phiE/PHIMAX,0,1)*100).toFixed(1)+'%';
   let s='PŘIPRAVENA';
-  if(st.phase==='accel') s = st.phi>5 ? 'RYCHLOST SVĚTLA' : 'ZRYCHLUJI';
+  if(halted) s='ZASTAVENO';
+  else if(paused) s='ZASTAVUJI';
+  else if(st.phase==='accel') s = phiE>5 ? 'RYCHLOST SVĚTLA' : 'ZRYCHLUJI';
   else if(st.phase==='arrive') s = st.arrT>2.2 ? 'DORAZILI JSME' : 'ZPOMALUJI';
   el.st.textContent=s;
   const t=Math.floor(st.t), m=Math.floor(t/60), sec=t%60;
   el.tm.textContent=String(m).padStart(2,'0')+':'+String(sec).padStart(2,'0');
+  HINT.classList.toggle('on', st.phase==='arrive' && st.arrT>SPH_DELAY+1.5 && !sphTouched);
 }
 
 /* ================== OVLÁDÁNÍ ================== */
+function setPaused(p){
+  if(st.phase==='idle' || p===paused) return;
+  paused=p;
+  $('btnPause').textContent = p ? 'ROZLETĚT' : 'ZASTAVIT';
+  if(p){
+    ramp={type:'stop',t:0,r0:rate};                 // plynulé brzdění z aktuální rychlosti
+  } else {
+    halted=false;
+    if(actx) actx.resume();
+    ramp={type:'go',t:0,r0:rate};                   // plynulý rozjezd s překmitem
+  }
+}
 function startFlight(){
   if(!actx) audioInit(); else actx.resume();
   Object.assign(st,{phase:'accel',t:0,arrT:0,phi:0,h:0,D:D0,flash:0});
   endShown=false;
+  paused=false; halted=false; ramp=null; rate=1; phiE=0;
+  evs.length=0; lastEv=''; hideMsg();
+  nextEv=EV_FIRST[0]+rnd()*(EV_FIRST[1]-EV_FIRST[0]);
+  $('btnPause').textContent='ZASTAVIT';
+  resetSphere();
+  $('btnPause').style.display='';
   $('scrStart').classList.add('hide'); $('start').classList.add('hide'); $('start').style.display='none';
   $('scrEnd').classList.add('hide');
 }
 $('start').addEventListener('click',startFlight);
 $('again').addEventListener('click',startFlight);
+$('btnPause').addEventListener('click',()=>setPaused(!paused));
 $('btnSound').addEventListener('click',()=>{
   soundOn=!soundOn; $('btnSound').textContent='ZVUK: '+(soundOn?'ZAP':'VYP');
-  if(actx&&soundOn) actx.resume();
+  if(actx&&soundOn&&!halted) actx.resume();
 });
 $('btnFs').addEventListener('click',()=>{
   const d=document, el=d.documentElement;
@@ -571,14 +989,45 @@ $('btnFs').addEventListener('click',()=>{
 if(!(document.documentElement.requestFullscreen||document.documentElement.webkitRequestFullscreen)) $('btnFs').style.display='none';
 document.addEventListener('visibilitychange',()=>{
   if(!actx) return;
-  if(document.hidden) actx.suspend(); else actx.resume();
+  if(document.hidden) actx.suspend(); else if(!halted) actx.resume();
 });
+
+/* NOVÉ: tažení koule – chycení zastaví, tažení otáčí, puštění v pohybu ji nechá dotáčet */
+function sphHit(e){
+  if(st.phase!=='arrive' || st.arrT-SPH_DELAY<1.2 || sphSize<=0) return false;
+  return Math.hypot(e.clientX*dpr-cx,e.clientY*dpr-cy) <= sphSize*0.6;
+}
+app.addEventListener('pointerdown',e=>{
+  if(e.target.closest('button') || !sphHit(e)) return;
+  sphDrag={id:e.pointerId,x:e.clientX,t:performance.now(),v:0};
+  sphVel=0; sphTouched=true;
+  try{ app.setPointerCapture(e.pointerId); }catch(_){}
+  e.preventDefault();
+});
+app.addEventListener('pointermove',e=>{
+  if(!sphDrag || e.pointerId!==sphDrag.id) return;
+  const now=performance.now(), dtm=Math.max(4,now-sphDrag.t)/1000;
+  const dAng=-((e.clientX-sphDrag.x)*dpr)/(Math.PI*sphSize);   // povrch jde za prstem
+  sphAng+=dAng;
+  sphDrag.v=lerp(sphDrag.v,dAng/dtm,0.4);
+  sphDrag.x=e.clientX; sphDrag.t=now;
+});
+function endDrag(e){
+  if(!sphDrag || e.pointerId!==sphDrag.id) return;
+  const idle=performance.now()-sphDrag.t;
+  sphVel = idle>90 ? 0 : clamp(sphDrag.v,-4,4);      // pokud prst před puštěním stál, koule zůstane stát
+  sphDrag=null;
+}
+app.addEventListener('pointerup',endDrag);
+app.addEventListener('pointercancel',endDrag);
+
 addEventListener('resize',resize);
 addEventListener('orientationchange',()=>setTimeout(resize,200));
 
 /* ================== START ================== */
 buildGalaxy();
 buildNebula();
+buildSphere();
 resize();
 
 let last=performance.now(), hudT=1, fpsAcc=0, fpsN=0;
@@ -586,9 +1035,11 @@ function loop(now){
   requestAnimationFrame(loop);
   const raw=(now-last)/1000; last=now;
   const dt=Math.min(0.05,raw);
-  update(dt);
-  render(now/1000,dt);
+  updateRate(dt);               // plynulá změna "rychlosti času"
+  update(dt*rate);              // čas letu běží jen tak rychle, jak loď skutečně letí
+  render(now/1000,dt);          // hvězdy se dál jemně třpytí i při stání
   audioUpdate();
+  if(msgT>0){ msgT-=dt; if(msgT<=0) MSG.classList.remove('on'); }
   hudT+=dt; if(hudT>0.07){ hudT=0; hud(); }
   // hlídání výkonu - případně sníží rozlišení
   fpsAcc+=Math.min(raw,0.1); fpsN++;
